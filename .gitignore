@@ -1,0 +1,5 @@
+.env
+sandbox.code-workspace
+skills-lock.json
+.bash_history
+.devcontainer/devcontainer.json

@@ -10,6 +10,50 @@ WORKSPACE_FILE="$DEVCONTAINER_FOLDER/sandbox.code-workspace"
 die()  { echo "[sandbox] ERROR: $*" >&2; exit 1; }
 info() { echo "[sandbox] $*"; }
 
+# --- Preflight: make a fresh machine work without manual setup ---------------
+preflight() {
+  # Required host tools, with install hints
+  local missing=0
+  for tool in fzf jq xxd code devcontainer docker; do
+    command -v "$tool" >/dev/null 2>&1 && continue
+    missing=1
+    case "$tool" in
+      fzf|jq)        echo "[sandbox] MISSING: $tool  (brew install $tool)" >&2 ;;
+      devcontainer)  echo "[sandbox] MISSING: devcontainer  (npm install -g @devcontainers/cli)" >&2 ;;
+      code)          echo "[sandbox] MISSING: code  (VS Code → Cmd+Shift+P → 'Shell Command: Install code command in PATH')" >&2 ;;
+      docker)        echo "[sandbox] MISSING: docker  (install Docker Desktop)" >&2 ;;
+      xxd)           echo "[sandbox] MISSING: xxd  (install with Xcode command line tools: xcode-select --install)" >&2 ;;
+    esac
+  done
+  [ "$missing" -eq 0 ] || die "Install the tools above and re-run."
+
+  # First-run files that must exist before 'devcontainer up' or Docker's bind
+  # mounts fail. .env and .bash_history are gitignored; .claude is empty on a
+  # fresh clone. Create them if absent.
+  [ -e "$DEVCONTAINER_FOLDER/.env" ]           || { info "Creating empty .env"; : > "$DEVCONTAINER_FOLDER/.env"; }
+  [ -e "$DEVCONTAINER_FOLDER/.bash_history" ]  || { info "Creating .bash_history"; : > "$DEVCONTAINER_FOLDER/.bash_history"; }
+  [ -d "$DEVCONTAINER_FOLDER/.claude" ]        || { info "Creating .claude/"; mkdir -p "$DEVCONTAINER_FOLDER/.claude"; }
+
+  # The VS Code Dev Containers extension connects to the default Docker context
+  # at /var/run/docker.sock. Docker Desktop only creates that socket when
+  # "Allow the default Docker socket to be used" is enabled — otherwise the CLI
+  # works (via the desktop-linux context) but VS Code cannot start the container.
+  if [ ! -S /var/run/docker.sock ]; then
+    die "$(cat <<'EOF'
+/var/run/docker.sock is missing — VS Code Dev Containers will fail to connect.
+Enable it once in Docker Desktop:
+  Settings → Advanced → "Allow the default Docker socket to be used (requires password)"
+  → Apply & Restart.
+(The docker CLI still works without this because it uses the desktop-linux context,
+ but the VS Code extension needs the default socket.)
+EOF
+)"
+  fi
+
+  docker version >/dev/null 2>&1 || die "Docker daemon not reachable. Start Docker Desktop and retry."
+}
+preflight
+
 # Parse args — separate --danger flag from repo names
 SKIP_PERMISSIONS=false
 FILTERED_ARGS=()

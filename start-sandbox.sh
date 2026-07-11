@@ -1,9 +1,4 @@
 #!/usr/bin/env zsh
-# start-sandbox.sh
-# Start the Claude Code Sandbox devcontainer,
-# mounting one or more project repos into /workspace.
-# Always restarts the container fresh with the requested repos.
-
 set -euo pipefail
 
 DEVCONTAINER_FOLDER="$HOME/Developer/devcontainer"
@@ -12,15 +7,24 @@ DEVCONTAINER_CONFIG_BASE="$DEVCONTAINER_FOLDER/.devcontainer/devcontainer.base.j
 PROJECTS_FOLDER="$HOME/Developer"
 WORKSPACE_FILE="$DEVCONTAINER_FOLDER/sandbox.code-workspace"
 
-# ─── Helpers ──────────────────────────────────────────────────────────────────
-
 die()  { echo "[sandbox] ERROR: $*" >&2; exit 1; }
 info() { echo "[sandbox] $*"; }
 
-# ─── Resolve repos ────────────────────────────────────────────────────────────
+# Parse args — separate --danger flag from repo names
+SKIP_PERMISSIONS=false
+FILTERED_ARGS=()
 
+for arg in "$@"; do
+  if [[ "$arg" == "--danger" ]]; then
+    SKIP_PERMISSIONS=true
+  else
+    FILTERED_ARGS+=("$arg")
+  fi
+done
+set -- "${FILTERED_ARGS[@]}"
+
+# Repo selection
 REPOS=()
-
 if [ "$#" -gt 0 ]; then
   for arg in "$@"; do
     if [[ "$arg" == /* ]]; then
@@ -45,25 +49,21 @@ for repo in "${REPOS[@]}"; do
   [ -d "$repo" ] || die "Folder not found: $repo"
 done
 
-# ─── Ensure base config exists ────────────────────────────────────────────────
-
-# On first run, copy devcontainer.json to devcontainer.base.json
+# Create base config snapshot if it doesn't exist yet
 if [ ! -f "$DEVCONTAINER_CONFIG_BASE" ]; then
   info "Creating base config snapshot..."
   cp "$DEVCONTAINER_CONFIG" "$DEVCONTAINER_CONFIG_BASE"
 fi
 
-# ─── Stop running container if any ────────────────────────────────────────────
-
-if docker ps --format '{{.Names}}' 2>/dev/null | grep -q "vsc-devcontainer"; then
-  info "Stopping existing container..."
-  docker stop $(docker ps --format '{{.Names}}' | grep "vsc-devcontainer") >/dev/null
+# Remove existing container (stopped or running) so devcontainer up creates a fresh one
+EXISTING=$(docker ps -a --format '{{.Names}}' 2>/dev/null | grep "vsc-devcontainer" || true)
+if [ -n "$EXISTING" ]; then
+  info "Removing existing container..."
+  docker rm -f $EXISTING >/dev/null
 fi
 
-# ─── Inject repo mounts into devcontainer.json ────────────────────────────────
-
+# Inject repo mounts into devcontainer.json
 info "Configuring mounts..."
-
 MOUNT_JSON="[]"
 for repo in "${REPOS[@]}"; do
   name=$(basename "$repo")
@@ -75,20 +75,27 @@ for repo in "${REPOS[@]}"; do
   info "Mounting: $repo → /workspace/$name"
 done
 
-# Merge repo mounts into base config's mounts array
 jq --argjson newmounts "$MOUNT_JSON" \
   '.mounts += $newmounts' \
   "$DEVCONTAINER_CONFIG_BASE" > "$DEVCONTAINER_CONFIG"
 
-# ─── Start container ──────────────────────────────────────────────────────────
-
+# Start the devcontainer — because the container was removed above, devcontainer up
+# always runs docker build (with layer cache), so the image reflects the current
+# Dockerfile and VS Code won't prompt for a rebuild on connect
 info "Starting devcontainer..."
 devcontainer up --workspace-folder "$DEVCONTAINER_FOLDER"
 
-# ─── Generate workspace file ──────────────────────────────────────────────────
+# Set up --dangerously-skip-permissions alias if requested
+if [ "$SKIP_PERMISSIONS" = true ]; then
+  info "Setting up 'claude' alias with --dangerously-skip-permissions..."
+  devcontainer exec --workspace-folder "$DEVCONTAINER_FOLDER" \
+    zsh -c 'grep -qF "dangerously-skip-permissions" /home/node/.zshrc \
+      || echo "alias claude=\"claude --dangerously-skip-permissions\"" >> /home/node/.zshrc'
+  info "Alias added. Open a new terminal in the container to use it."
+fi
 
+# Generate dynamic workspace file
 info "Generating workspace file..."
-
 FOLDERS_JSON=""
 for repo in "${REPOS[@]}"; do
   name=$(basename "$repo")
@@ -104,25 +111,18 @@ cat > "$WORKSPACE_FILE" <<EOF
 }
 EOF
 
-# ─── Open VS Code ─────────────────────────────────────────────────────────────
+# (Re)open VS Code — triggers reconnect/rebuild against the new container
+info "Opening VS Code..."
+code --remote "dev-container+$(printf '%s' "$DEVCONTAINER_FOLDER" | xxd -p | tr -d '\n')" \
+  /devcontainer-config/sandbox.code-workspace
 
-VSCODE_ALREADY_OPEN=false
-if pgrep -x "Electron" >/dev/null 2>&1; then
-  if lsof -c Electron 2>/dev/null | grep -q "$DEVCONTAINER_FOLDER"; then
-    VSCODE_ALREADY_OPEN=true
-  fi
-fi
-
-if [ "$VSCODE_ALREADY_OPEN" = true ]; then
-  info "VS Code already open with this devcontainer — not reopening."
-else
-  info "Opening VS Code..."
-  code --remote "dev-container+$(printf '%s' "$DEVCONTAINER_FOLDER" | xxd -p | tr -d '\n')" /devcontainer-config/sandbox.code-workspace
-fi
-
-# ─── Summary ──────────────────────────────────────────────────────────────────
-
+# Summary
 info "Ready. Mounted repos:"
 for repo in "${REPOS[@]}"; do
   echo "  /workspace/$(basename "$repo") → $repo"
 done
+
+if [ "$SKIP_PERMISSIONS" = true ]; then
+  echo ""
+  echo "  ⚠️  --dangerously-skip-permissions is active in this session."
+fi

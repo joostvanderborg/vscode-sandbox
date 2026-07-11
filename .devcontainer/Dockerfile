@@ -101,6 +101,10 @@ ENV VISUAL=nano
 
 RUN curl -fsSL https://claude.ai/install.sh | bash
 
+# Global gitignore: exclude .claude/ directories from all workspace repos
+RUN echo '.claude/' > /home/node/.gitignore_global && \
+    git config --global core.excludesfile /home/node/.gitignore_global
+
 USER root
 RUN ln -sf /home/node/.local/bin/claude /usr/local/bin/claude
 

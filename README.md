@@ -45,5 +45,34 @@ with a fix instead of a cryptic error.
    `.env`, `.bash_history`, and `.claude/`. `.env` and `.bash_history` are
    gitignored; `.claude/` is empty on a fresh clone.
 
+4. **VS Code user settings** (host, `Cmd+Shift+P` → *Preferences: Open User
+   Settings (JSON)*) — stop the Dev Containers extension from forwarding your
+   host git credentials into containers:
+
+   ```json
+   "dev.containers.copyGitConfig": false,
+   "dev.containers.gitCredentialHelperConfigLocation": "none"
+   ```
+
 The preflight verifies all of the above and stops with an actionable message if
-anything is missing.
+anything is missing (the VS Code settings only produce a warning).
+
+## Credential isolation
+
+No auth from the host reaches the container except what you configure
+explicitly:
+
+- **`.env`** is the opt-in channel. `GH_TOKEN` there is the only GitHub
+  credential: `gh` is git's credential helper, and `git@github.com:` remotes are
+  rewritten to HTTPS, so its scope is the agent's ceiling.
+- **`.claude/`** is mounted for the Claude login, settings and memory. It is
+  shared and writable across all sandboxes.
+- **`.workspace/`** (just the generated workspace file) is the only part of this
+  repo mounted into the container, read-only. `.env` and the launcher scripts
+  are not reachable.
+- **SSH agent, GPG agent and VS Code's git credential forwarding** are removed
+  on every attach by `sandbox-scrub.sh`. It then checks that none answer; if
+  any does, VS Code reports the `postAttachCommand` as failed and every new zsh
+  shows a `⚠ CREDENTIAL LEAK` banner.
+
+VS Code's own IPC channel to the host remains, because attaching needs it.

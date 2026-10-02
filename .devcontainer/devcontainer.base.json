@@ -27,6 +27,8 @@
         "amiralizadeh9480.laravel-extra-intellisense"
       ],
       "settings": {
+        "git.terminalAuthentication": false,
+        "github.gitAuthentication": false,
         "editor.formatOnSave": true,
         "editor.defaultFormatter": "esbenp.prettier-vscode",
         "editor.codeActionsOnSave": {
@@ -50,13 +52,19 @@
     "source=${localEnv:HOME}/Developer/devcontainer/.bash_history,target=/commandhistory/.bash_history,type=bind,consistency=cached",
     "source=${localEnv:HOME}/Developer/devcontainer/.claude,target=/home/node/.claude,type=bind,consistency=cached"
   ],
+  "remoteEnv": {
+    "SSH_AUTH_SOCK": "",
+    "BROWSER": "",
+    "GIT_ASKPASS": ""
+  },
   "containerEnv": {
     "NODE_OPTIONS": "--max-old-space-size=4096",
     "CLAUDE_CONFIG_DIR": "/home/node/.claude",
     "POWERLEVEL9K_DISABLE_GITSTATUS": "true"
   },
- "workspaceMount": "source=${localEnv:HOME}/Developer/devcontainer,target=/devcontainer-config,type=bind,consistency=cached",
+  "workspaceMount": "source=${localEnv:HOME}/Developer/devcontainer/.workspace,target=/devcontainer-config,type=bind,readonly",
   "workspaceFolder": "/workspace",
   "postStartCommand": "HOST_IP=$(getent hosts host.docker.internal | awk '{print $1}') && [ -n \"$HOST_IP\" ] && sudo sysctl -w net.ipv4.conf.all.route_localnet=1 && sudo iptables -t nat -A OUTPUT -p tcp -d 127.0.0.1 --dport 8080 -j DNAT --to-destination ${HOST_IP}:8080 && sudo iptables -t nat -A POSTROUTING -p tcp -d ${HOST_IP} --dport 8080 -j MASQUERADE && sudo iptables -A OUTPUT -d ${HOST_IP} -p tcp --dport 8080 -j ACCEPT || true",
+  "postAttachCommand": "/usr/local/bin/sandbox-scrub.sh",
   "waitFor": "postStartCommand"
 }

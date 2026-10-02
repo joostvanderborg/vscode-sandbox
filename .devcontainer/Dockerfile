@@ -90,7 +90,7 @@ USER node
 
 # Install global npm packages
 ENV NPM_CONFIG_PREFIX=/usr/local/share/npm-global
-ENV PATH=$PATH:/usr/local/share/npm-global/bin
+ENV PATH=/usr/local/share/npm-global/bin:$PATH
 
 # Set the default shell to zsh
 ENV SHELL=/bin/zsh
@@ -99,20 +99,28 @@ ENV SHELL=/bin/zsh
 ENV EDITOR=nano
 ENV VISUAL=nano
 
-RUN curl -fsSL https://claude.ai/install.sh | bash
+RUN npm install -g @anthropic-ai/claude-code@${CLAUDE_CODE_VERSION}
 
 # Global gitignore: exclude .claude/ directories from all workspace repos
 RUN echo '.claude/' > /home/node/.gitignore_global && \
     git config --global core.excludesfile /home/node/.gitignore_global
 
-USER root
-RUN ln -sf /home/node/.local/bin/claude /usr/local/bin/claude
-
 USER node
 
-# Copy and set up firewall script
-COPY init-firewall.sh /usr/local/bin/
+# Copy and set up firewall and credential scrub scripts
+COPY init-firewall.sh sandbox-scrub.sh /usr/local/bin/
 USER root
+RUN chmod +x /usr/local/bin/sandbox-scrub.sh && \
+  echo 'unset BROWSER  # remoteEnv does not override the BROWSER VS Code injects into terminals' >> /etc/zsh/zshenv && \
+  echo '[ -s /tmp/sandbox-credential-leaks ] && { echo "⚠ CREDENTIAL LEAK: host credentials are reachable in this sandbox:"; sed "s/^/  - /" /tmp/sandbox-credential-leaks; }' >> /etc/zsh/zshrc
+
+# GitHub auth comes only from GH_TOKEN (.env): gh is the sole credential helper,
+# and SSH remotes are rewritten to HTTPS since no SSH agent is forwarded.
+RUN git config --system credential.https://github.com.helper '' && \
+  git config --system --add credential.https://github.com.helper '!gh auth git-credential' && \
+  git config --system url.https://github.com/.insteadOf git@github.com: && \
+  git config --system --add url.https://github.com/.insteadOf ssh://git@github.com/
+
 RUN chmod +x /usr/local/bin/init-firewall.sh && \
   echo "node ALL=(root) NOPASSWD: /usr/local/bin/init-firewall.sh, /sbin/iptables, /usr/sbin/iptables, /usr/sbin/sysctl" > /etc/sudoers.d/node-firewall && \
   chmod 0440 /etc/sudoers.d/node-firewall

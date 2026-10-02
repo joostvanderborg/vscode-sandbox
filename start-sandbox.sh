@@ -5,7 +5,11 @@ DEVCONTAINER_FOLDER="$HOME/Developer/devcontainer"
 DEVCONTAINER_CONFIG="$DEVCONTAINER_FOLDER/.devcontainer/devcontainer.json"
 DEVCONTAINER_CONFIG_BASE="$DEVCONTAINER_FOLDER/.devcontainer/devcontainer.base.json"
 PROJECTS_FOLDER="$HOME/Developer"
-WORKSPACE_FILE="$DEVCONTAINER_FOLDER/sandbox.code-workspace"
+# Only this folder is mounted into the container (read-only, at /devcontainer-config),
+# so the agent can't read .env or edit scripts that run on the host.
+WORKSPACE_DIR="$DEVCONTAINER_FOLDER/.workspace"
+WORKSPACE_FILE="$WORKSPACE_DIR/sandbox.code-workspace"
+VSCODE_USER_SETTINGS="$HOME/Library/Application Support/Code/User/settings.json"
 
 die()  { echo "[sandbox] ERROR: $*" >&2; exit 1; }
 info() { echo "[sandbox] $*"; }
@@ -33,6 +37,21 @@ preflight() {
   [ -e "$DEVCONTAINER_FOLDER/.env" ]           || { info "Creating empty .env"; : > "$DEVCONTAINER_FOLDER/.env"; }
   [ -e "$DEVCONTAINER_FOLDER/.bash_history" ]  || { info "Creating .bash_history"; : > "$DEVCONTAINER_FOLDER/.bash_history"; }
   [ -d "$DEVCONTAINER_FOLDER/.claude" ]        || { info "Creating .claude/"; mkdir -p "$DEVCONTAINER_FOLDER/.claude"; }
+  [ -d "$WORKSPACE_DIR" ]                      || mkdir -p "$WORKSPACE_DIR"
+
+  # The Dev Containers extension forwards host git credentials unless these are
+  # set in the host user settings (they are read by the host-side extension).
+  # sandbox-scrub.sh still cleans up inside the container; this closes the source.
+  local setting
+  for setting in copyGitConfig gitCredentialHelperConfigLocation; do
+    grep -Eq "\"dev\.containers\.$setting\"[[:space:]]*:[[:space:]]*(false|\"none\")" \
+      "$VSCODE_USER_SETTINGS" 2>/dev/null && continue
+    echo "[sandbox] WARNING: VS Code user settings lack \"dev.containers.$setting\" — host git credentials will be forwarded." >&2
+    echo "[sandbox]          Add to $VSCODE_USER_SETTINGS:" >&2
+    echo '[sandbox]            "dev.containers.copyGitConfig": false,' >&2
+    echo '[sandbox]            "dev.containers.gitCredentialHelperConfigLocation": "none"' >&2
+    break
+  done
 
   # The VS Code Dev Containers extension connects to the default Docker context
   # at /var/run/docker.sock. Docker Desktop only creates that socket when
